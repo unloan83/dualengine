@@ -57,7 +57,8 @@ def fetch_market_data(symbol):
     except:
         return None
 
-def log_trade_to_csv(date, symbol, side, entry_price):
+def log_trade_to_csv(date, symbol, side, entry_price, current_velocity=1.0, current_atr=0.5):
+    """Saves entries to the CSV along with the exact metrics used at that moment"""
     new_row = {
         "Date": date,
         "Symbol": symbol,
@@ -65,19 +66,26 @@ def log_trade_to_csv(date, symbol, side, entry_price):
         "Entry_Price": entry_price,
         "Exit_Price": "-",
         "P&L_Points": "-",
-        "Status": "OPEN"
+        "Status": "OPEN",
+        "Used_Velocity": f"{current_velocity}%",   # 📌 Tracks slider settings
+        "Used_ATR_Mult": f"{current_atr}x"         # 📌 Tracks slider settings
     }
     
     if os.path.exists(LOG_FILE):
         df = pd.read_csv(LOG_FILE)
-        # Prevent duplication entries
-        if not ((df['Date'] == date) & (df['Symbol'] == symbol)).any():
+        # 📌 Allow writing a new row if the user tests different slider settings
+        is_duplicate = ((df['Date'] == date) & 
+                        (df['Symbol'] == symbol) & 
+                        (df['Used_Velocity'] == f"{current_velocity}%") & 
+                        (df['Used_ATR_Mult'] == f"{current_atr}x")).any()
+        
+        if not is_duplicate:
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     else:
         df = pd.DataFrame([new_row])
         
     df.to_csv(LOG_FILE, index=False)
-    print(f"📌 Logged entry for {symbol}")
+    print(f"📌 SUCCESS: Saved tracking layout for {symbol} ({current_velocity}%, {current_atr}x)")
 
 def scan_and_execute(velocity_pct, atr_mult):
     print(f"🚀 Initializing scan: Velocity={velocity_pct}%, ATR Mult={atr_mult}x")
