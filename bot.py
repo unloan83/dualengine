@@ -95,9 +95,9 @@ def log_trade_to_csv(date, symbol, side, entry_price):
     print(f"📌 SUCCESS: Logged {side} position for {symbol} at {entry_price}")
 
 def scan_and_execute():
-    print("🚀 Starting Refactored Dual-Engine Morning Scan...")
+   def scan_and_execute():
+    print("🚀 Starting Clean Dual-Engine Morning Scan...")
     today_date = datetime.now().strftime("%Y-%m-%d")
-    triggered_any = False
     
     for symbol in WATCHLIST:
         metrics = fetch_market_data(symbol)
@@ -106,35 +106,24 @@ def scan_and_execute():
             
         day_range = metrics["high"] - metrics["low"]
         
-        # --- RELAXED STRATEGY CONDITIONS ---
-        long_target = metrics["open"] * 1.01     # Up 1.0% from Open
-        short_target = metrics["open"] * 0.99    # Down 1.0% from Open
-        atr_req = metrics["atr"] * 0.5           # 0.5x ATR Range expansion
+        # --- PRODUCTION RELAXED STRATEGY CONDITIONS ---
+        long_target = metrics["open"] * 1.01     # Up exactly 1.0% from morning Open
+        short_target = metrics["open"] * 0.99    # Down exactly 1.0% from morning Open
+        atr_req = metrics["atr"] * 0.5           # 0.5x ATR Range expansion achieved
         
         # Engine A: Breakout (Long)
         if (metrics["current"] > long_target) and (day_range > atr_req):
             log_trade_to_csv(today_date, symbol, "BUY", metrics["current"])
-            triggered_any = True
             
         # Engine B: Breakdown (Short)
         elif (metrics["current"] < short_target) and (day_range > atr_req):
             log_trade_to_csv(today_date, symbol, "SELL", metrics["current"])
-            triggered_any = True
-
-    # 🛠️ FALLBACK FORCED TEST TRIDGER: 
-    # If it's market-holiday/live conditions failed, create a trade anyway to test your GitHub pipeline!
-    if not triggered_any:
-        print("ℹ️ Strategy met no live signals. Forcing a test trade to generate your CSV...")
-        mock_metrics = fetch_market_data(WATCHLIST[0])
-        if mock_metrics:
-            log_trade_to_csv(today_date, WATCHLIST[0], "BUY_TEST", mock_metrics["current"])
-        else:
-            # Absolute hardcoded fallback if API fails completely
-            log_trade_to_csv(today_date, "RELIANCE", "TEST_RUN", 2500.00)
 
 if __name__ == "__main__":
     run_type = sys.argv[1] if len(sys.argv) > 1 else "scan"
     if run_type == "scan":
         scan_and_execute()
-    else:
-        print("Skipping squareoff for setup verification.")
+    elif run_type == "squareoff":
+        # Turning on evening execution loop now that pipeline is verified
+        from bot import square_off_and_close
+        square_off_and_close()
