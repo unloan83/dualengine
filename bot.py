@@ -11,6 +11,10 @@ ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
 BASE_URL = "https://upstox.com"
 LOG_FILE = "paper_trade_log.csv"
 
+# Minimum and Maximum limits for your target range
+MIN_TARGET_PCT = 7.0
+MAX_TARGET_PCT = 12.0
+
 def get_headers():
     return {
         "Accept": "application/json",
@@ -18,41 +22,22 @@ def get_headers():
     }
 
 def get_pure_upstox_fo_watchlist():
-    """
-    📌 PURE UPSTOX FILTERING: Downloads the official master instrument list directly 
-    from Upstox, unpacks the gzip, and filters strictly for the NSE Futures & Options segment.
-    No external websites, no hardcoded fallback arrays, no fake logic.
-    """
     print("📥 Downloading official master instrument file from Upstox...")
     url = "https://upstox.com"
-    
     try:
         response = requests.get(url, timeout=15)
         if response.status_code != 200:
             raise Exception(f"Upstox instrument server returned status {response.status_code}")
-            
-        # Decompress gzip file directly from raw stream memory
         gzip_file = gzip.GzipFile(fileobj=BytesIO(response.content))
-        
-        # Load directly into a Pandas DataFrame
         df = pd.read_csv(gzip_file)
-        
-        # Upstox master schema columns: instrument_key, exchange_token, trading_symbol, short_name, etc.
-        # Filter for active Equity Derivatives (F&O Underlying Assets)
         df_fo = df[(df['exchange'] == 'NSE_FO') & (df['instrument_type'] == 'FUTSTK')]
-        
-        # Extract the underlying base stock symbol (e.g., extracting 'TATAMOTORS' from 'TATAMOTORS26OCTFUT')
         fo_stocks = df_fo['underlying_symbol'].dropna().unique().tolist()
-        
         if not fo_stocks:
             raise Exception("Upstox master file returned an empty F&O dataset.")
-            
         print(f"🎯 Pure Upstox Integration: Identified {len(fo_stocks)} live F&O stock assets.")
         return fo_stocks
-        
     except Exception as e:
         print(f"❌ CRITICAL SYSTEM ERROR: Unable to dynamically verify active symbols: {e}")
-        # Terminate execution completely rather than logging mock data
         sys.exit(1)
 
 def fetch_market_data(symbol):
@@ -91,7 +76,6 @@ def log_trade_to_csv(date, symbol, side, entry_price, current_velocity, current_
         "Exit_Price": "-", "P&L_Points": "-", "Status": "OPEN",
         "Used_Velocity": f"{current_velocity}%", "Used_ATR_Mult": f"{current_atr}x"
     }
-    
     if os.path.exists(LOG_FILE):
         df = pd.read_csv(LOG_FILE)
         is_duplicate = ((df['Date'] == date) & (df['Symbol'] == symbol) & 
@@ -101,15 +85,12 @@ def log_trade_to_csv(date, symbol, side, entry_price, current_velocity, current_
             df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
     else:
         df = pd.DataFrame([new_row])
-        
     df.to_csv(LOG_FILE, index=False)
-    print(f"📌 position logged: {side} {symbol} at ₹{entry_price}")
+    print(f"📌 Position logged: {side} {symbol} at ₹{entry_price}")
 
 def scan_and_execute(velocity_pct, atr_mult):
     print(f"🚀 Initializing Live F&O Scan: Velocity={velocity_pct}%, ATR Mult={atr_mult}x")
     today_date = datetime.now().strftime("%Y-%m-%d")
-    
-    # 📌 Fetching the 100% true, dynamic Upstox F&O Watchlist
     dynamic_watchlist = get_pure_upstox_fo_watchlist()
     
     for symbol in dynamic_watchlist:
@@ -121,18 +102,57 @@ def scan_and_execute(velocity_pct, atr_mult):
         short_target = metrics["open"] * (1 - (velocity_pct / 100))
         atr_req = metrics["atr"] * atr_mult
         
-        # Engine A: Breakout (Long)
         if (metrics["current"] > long_target) and (day_range > atr_req):
             log_trade_to_csv(today_date, symbol, "BUY", metrics["current"], velocity_pct, atr_mult)
-            
-        # Engine B: Breakdown (Short)
         elif (metrics["current"] < short_target) and (day_range > atr_req):
             log_trade_to_csv(today_date, symbol, "SELL", metrics["current"], velocity_pct, atr_mult)
 
+def square_off_and_close():
+    """📌 NEW EXCLUDED RE-VALUATION: Tracks if the stock achieved your 7%-12% target range 
+    during its maximum intraday peak, locking profits at Day's High / Day's Low.
+    """
+    print("📉 Executing High-Velocity Target Processing Loop...")
+    today_date = datetime.now().strftime("%Y-%m-%d")
+    if not os.path.exists(LOG_FILE): return
+    
+    df = pd.read_csv(LOG_FILE)
+    mask = (df['Date'] == today_date) & (df['Status'] == 'OPEN')
+    if not mask.any(): return
+        
+    for index, row in df[mask].iterrows():
+        symbol = row['Symbol']
+        side = row['Side']
+        entry = float(row['Entry_Price'])
+        
+        metrics = fetch_market_data(symbol)
+        if not metrics: continue
+        
+        # Calculate maximum possible peak performance reached during the session
+        if side == "BUY":
+            max_move_pct = ((metrics["high"] - entry) / entry) * 100
+            # If peak move met the 7% threshold, exit at Day's High. Else exit at current price.
+            exit_price = metrics["high"] if max_move_pct >= MIN_TARGET_PCT else metrics["current"]
+            pnl = exit_price - entry
+        else: # SELL
+            max_move_pct = ((entry - metrics["low"]) / entry) * 100
+            # If peak drop met the 7% threshold, exit at Day's Low. Else exit at current price.
+            exit_price = metrics["low"] if max_move_pct >= MIN_TARGET_PCT else metrics["current"]
+            pnl = entry - exit_price
+            
+        df.at[index, 'Exit_Price'] = round(exit_price, 2)
+        df.at[index, 'P&L_Points'] = round(pnl, 2)
+        df.at[index, 'Status'] = 'CLOSED_TARGET' if max_move_pct >= MIN_TARGET_PCT else 'CLOSED_EOD'
+        
+        print(f"✅ Processed {symbol} | Peak Move: {round(max_move_pct, 2)}% | Exit Price: {exit_price}")
+        
+    df.to_csv(LOG_FILE, index=False)
+
 if __name__ == "__main__":
-    run_type = sys.argv if len(sys.argv) > 1 else "scan"
+    run_type = sys.argv[1] if len(sys.argv) > 1 else "scan"
     velocity = float(os.getenv("INPUT_VELOCITY", 1.0))
     atr_multiplier = float(os.getenv("INPUT_ATR_MULT", 0.5))
     
     if run_type == "scan":
         scan_and_execute(velocity, atr_multiplier)
+    elif run_type == "squareoff":
+        square_off_and_close()
