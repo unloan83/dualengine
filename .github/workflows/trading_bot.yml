@@ -2,50 +2,53 @@ name: Dual-Engine Trading Bot
 
 on:
   schedule:
-    # 10:00 AM IST (04:30 AM UTC) - Morning Scan
-    - cron: '30 4 * * 1-5'
-    # 03:10 PM IST (09:40 AM UTC) - Square-off
-    - cron: '40 9 * * 1-5'
+    - cron: '30 4 * * 1-5'    # 10:00 AM IST Daily Execution
+    - cron: '40 9 * * 1-5'    # 03:10 PM IST Daily Close
   workflow_dispatch:
+    inputs:
+      velocity:
+        description: 'Price Velocity Threshold'
+        default: '1.0'
+      atr_mult:
+        description: 'ATR Multiplier'
+        default: '0.5'
 
 jobs:
   trade:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Code Base
         uses: actions/checkout@v3
         with:
           persist-credentials: true
-          token: ${{ secrets.GITHUB_TOKEN }} 
-      - name: Setup Python
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Initialize Environment
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
 
-      - name: Install Dependencies
+      - name: Core Dependencies Install
+        run: pip install requests pandas
+
+      - name: Execute Model Core Script
+        env:
+          UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+          INPUT_VELOCITY: ${{ github.event.inputs.velocity }}
+          INPUT_ATR_MULT: ${{ github.event.inputs.atr_mult }}
         run: |
-          pip install requests pandas
+          if [ "${{ github.event.schedule }}" = "40 9 * * 1-5" ]; then
+            python bot.py squareoff
+          else
+            python bot.py scan
+          fi
 
-      - name: Run Morning Scan
-        if: github.event.schedule == '30 4 * * 1-5' || github.event_name == 'workflow_dispatch'
-        env:
-          UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
-          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
-        run: python bot.py scan
-
-      - name: Run Evening Square-Off
-        if: github.event.schedule == '40 9 * * 1-5'
-        env:
-          UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
-          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
-        run: python bot.py squareoff
-
-      - name: Commit and Push Trading Logs
+      - name: Safe Data Stream Sync Only
         run: |
           git config --local user.email "actions@github.com"
           git config --local user.name "GitHub Actions Bot"
-          # Only commit if changes were written to the CSV file
           if [ -f paper_trade_log.csv ]; then
             git add paper_trade_log.csv
-            git diff --quiet && git diff --staged --quiet || (git commit -m "📈 Auto-update paper trade logs [skip ci]" && git push)
+            git diff --quiet && git diff --staged --quiet || (git commit -m "📈 update data logs [skip ci]" && git push)
           fi
