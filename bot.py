@@ -91,7 +91,7 @@ def log_trade_to_csv(date, symbol, side, entry_price):
     print(f"📌 Logged OPEN position: {side} {symbol} at {entry_price}")
 
 def scan_and_execute():
-    print("🚀 Starting Dual-Engine Morning Scan...")
+    print("🚀 Starting Relaxed Dual-Engine Morning Scan...")
     today_date = get_today_ist_date()
     
     for symbol in WATCHLIST:
@@ -101,20 +101,24 @@ def scan_and_execute():
             
             day_range = metrics["high"] - metrics["low"]
             
-            # Engine A: Breakout (Long)
-            if (metrics["current"] > metrics["y_high"]) and \
-               (metrics["current"] > metrics["open"] * 1.03) and \
-               (day_range > metrics["atr"] * 1.5):
+            # --- LOWERED METRIC CALCULATIONS ---
+            long_velocity_target = metrics["open"] * 1.01   # Up 1% from open
+            short_velocity_target = metrics["open"] * 0.99  # Down 1% from open
+            relaxed_atr_requirement = metrics["atr"] * 0.5  # Only 0.5x ATR range needed
+            
+            # Engine A: Relaxed Breakout (Long)
+            if (metrics["current"] > long_velocity_target) and \
+               (day_range > relaxed_atr_requirement):
                 log_trade_to_csv(today_date, symbol, "BUY", metrics["current"])
                 
-            # Engine B: Breakdown (Short)
-            elif (metrics["current"] < metrics["y_low"]) and \
-                 (metrics["current"] < metrics["open"] * 0.97) and \
-                 (day_range > metrics["atr"] * 1.5):
+            # Engine B: Relaxed Breakdown (Short)
+            elif (metrics["current"] < short_velocity_target) and \
+                 (day_range > relaxed_atr_requirement):
                 log_trade_to_csv(today_date, symbol, "SELL", metrics["current"])
                 
         except Exception as e:
             print(f"❌ Error scanning {symbol}: {e}")
+
 
 def square_off_and_close():
     print("📉 Starting Evening Auto Square-Off Execution...")
