@@ -2,11 +2,11 @@ name: Dual-Engine Trading Bot
 
 on:
   schedule:
-    # Runs Monday to Friday at 04:30 AM UTC (10:00 AM IST) - Morning Scan & Entry
+    # 10:00 AM IST (04:30 AM UTC) - Morning Scan
     - cron: '30 4 * * 1-5'
-    # Runs Monday to Friday at 09:40 AM UTC (03:10 PM IST) - Evening Square-off
+    # 03:10 PM IST (09:40 AM UTC) - Square-off
     - cron: '40 9 * * 1-5'
-  workflow_dispatch: # Allows you to manually trigger it anytime for testing
+  workflow_dispatch:
 
 jobs:
   trade:
@@ -14,11 +14,13 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
+        with:
+          persist-credentials: true
 
       - name: Setup Python
         uses: actions/setup-python@v4
         with:
-          python-node-version: '3.10'
+          python-version: '3.10'
 
       - name: Install Dependencies
         run: |
@@ -37,3 +39,13 @@ jobs:
           UPSTOX_API_KEY: ${{ secrets.UPSTOX_API_KEY }}
           UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
         run: python bot.py squareoff
+
+      - name: Commit and Push Trading Logs
+        run: |
+          git config --local user.email "actions@github.com"
+          git config --local user.name "GitHub Actions Bot"
+          # Only commit if changes were written to the CSV file
+          if [ -f paper_trade_log.csv ]; then
+            git add paper_trade_log.csv
+            git diff --quiet && git diff --staged --quiet || (git commit -m "📈 Auto-update paper trade logs [skip ci]" && git push)
+          fi
