@@ -2,15 +2,15 @@ name: Dual-Engine Trading Bot
 
 on:
   schedule:
-    - cron: '30 4 * * 1-5'    # 10:00 AM IST Daily Execution
-    - cron: '40 9 * * 1-5'    # 03:10 PM IST Daily Close
+    - cron: '30 4 * * 1-5'    # 10:00 AM IST Daily Entry Scan
+    - cron: '40 9 * * 1-5'    # 03:10 PM IST Daily Close Review
   workflow_dispatch:
     inputs:
       velocity:
-        description: 'Price Velocity Threshold'
+        description: 'Price Velocity'
         default: '1.0'
       atr_mult:
-        description: 'ATR Multiplier'
+        description: 'ATR Mult'
         default: '0.5'
 
 jobs:
@@ -38,6 +38,7 @@ jobs:
           INPUT_VELOCITY: ${{ github.event.inputs.velocity }}
           INPUT_ATR_MULT: ${{ github.event.inputs.atr_mult }}
         run: |
+          # 📌 FIXED: Explicit routing logic using clean text checking flags
           if [ "${{ github.event.schedule }}" = "40 9 * * 1-5" ]; then
             python bot.py squareoff
           else
