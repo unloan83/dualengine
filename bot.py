@@ -4,12 +4,11 @@ import gzip
 import json
 import requests
 import pandas as pd
-from io import BytesIO
 from datetime import datetime, timedelta
 
 API_KEY = os.getenv("UPSTOX_API_KEY")
 ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
-BASE_URL = "https://api.upstox.com/v2"
+BASE_URL = "https://upstox.com"
 LOG_FILE = "paper_trade_log.csv"
 
 MIN_TARGET_PCT = 7.0
@@ -22,53 +21,37 @@ def get_headers():
     }
 
 def get_pure_upstox_fo_watchlist():
-    """
-    📌 FIXED JSON INTEGRATION: Leverages Upstox's official active JSON endpoint layout.
-    Unpacks raw byte dictionaries to extract underlyings without CSV dependency mismatches.
-    """
     print("📥 Downloading official active JSON instrument mapping from Upstox...")
-    # Using the clean, segment-specific active JSON stream to avoid heavy parsing weights
-    url = "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
-    
+    url = "https://upstox.com"
     try:
         response = requests.get(url, timeout=15)
         if response.status_code != 200:
             raise Exception(f"Upstox instrument server returned status {response.status_code}")
-            
-        # Decompress the gzipped raw binary stream data cleanly
         decompressed_data = gzip.decompress(response.content)
-        
-        # Load the raw text layout array directly into structural dictionaries
         json_data = json.loads(decompressed_data.decode('utf-8'))
         df = pd.DataFrame(json_data)
-        
-        # 📌 Upstox JSON structure filters:
-        # segment == 'NSE_FO' handles derivatives, and instrument_type == 'FUTSTK' keeps focus on stocks
         df_fo = df[(df['segment'] == 'NSE_FO') & (df['instrument_type'] == 'FUTSTK')]
-        
-        # Extract unique underlying symbols (e.g., getting 'TATAMOTORS' from weekly derivative tokens)
         fo_stocks = df_fo['underlying_symbol'].dropna().unique().tolist()
-        
         if not fo_stocks:
             raise Exception("Upstox master dataset returned zero active stock derivatives matches.")
-            
         print(f"🎯 Pure Upstox Integration: Identified {len(fo_stocks)} live high-velocity F&O symbols.")
         return fo_stocks
-        
     except Exception as e:
         print(f"❌ CRITICAL SYSTEM ERROR: Unable to dynamically verify active symbols: {e}")
         sys.exit(1)
 
 def fetch_market_data(symbol):
     instrument_key = f"NSE_EQ|{symbol}" 
+    
+    # 1. Historical API used STRICTLY to calculate 14-day ATR baseline
     today_str = datetime.now().strftime("%Y-%m-%d")
     start_str = (datetime.now() - timedelta(days=30)).strftime("%Y-%m-%d")
     hist_url = f"{BASE_URL}/historical-candle/{instrument_key}/day/{today_str}/{start_str}"
     
     try:
-        response = requests.get(hist_url, headers=get_headers(), timeout=5)
-        if response.status_code != 200: return None
-        res = response.json()
+        hist_response = requests.get(hist_url, headers=get_headers(), timeout=5)
+        if hist_response.status_code != 200: return None
+        res = hist_response.json()
         if "data" not in res or not res["data"]["candles"]: return None
             
         candles = res["data"]["candles"]
@@ -78,12 +61,24 @@ def fetch_market_data(symbol):
         df_hist['range'] = df_hist['high'] - df_hist['low']
         atr_14 = df_hist['range'].iloc[-15:-1].mean()
         
+        # 2. 📌 FIXED: Fetch TRUE live session price, open, high, and low from live quote feed
+        quote_url = f"{BASE_URL}/market-quote/quotes?instrument_key={instrument_key}"
+        quote_response = requests.get(quote_url, headers=get_headers(), timeout=5)
+        if quote_response.status_code != 200: return None
+        quote_res = quote_response.json()
+        
+        live_data = quote_res["data"][instrument_key]
+        current_price = live_data["last_price"]
+        today_open = live_data["ohlc"]["open"]
+        today_high = live_data["ohlc"]["high"]
+        today_low = live_data["ohlc"]["low"]
+        
         return {
             "symbol": symbol,
-            "current": df_hist['close'].iloc[-1],
-            "open": df_hist['open'].iloc[-1],
-            "high": df_hist['high'].iloc[-1],
-            "low": df_hist['low'].iloc[-1],
+            "current": current_price,
+            "open": today_open,
+            "high": today_high,
+            "low": today_low,
             "atr": atr_14
         }
     except:
