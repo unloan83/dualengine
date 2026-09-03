@@ -149,10 +149,17 @@ def square_off_and_close():
 
 if __name__ == "__main__":
     run_type = sys.argv[1] if len(sys.argv) > 1 else "scan"
-    velocity = float(os.getenv("INPUT_VELOCITY", 1.0))
-    atr_multiplier = float(os.getenv("INPUT_ATR_MULT", 0.5))
+    
+    # 📌 FIXED: Handle empty string inputs safely from scheduled cron events
+    env_velocity = os.getenv("INPUT_VELOCITY", "1.0")
+    env_atr_mult = os.getenv("INPUT_ATR_MULT", "0.5")
+    
+    # If the input is completely empty or blank, assign the default system settings
+    velocity = float(env_velocity) if env_velocity.strip() != "" else 1.0
+    atr_multiplier = float(env_atr_mult) if env_atr_mult.strip() != "" else 0.5
     
     if run_type == "scan":
         scan_and_execute(velocity, atr_multiplier)
     elif run_type == "squareoff":
         square_off_and_close()
+
