@@ -71,7 +71,7 @@ jobs:
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             --data-urlencode text="✅ DualEngine [$MODE] completed OK.
 
-          $TAIL"
+$TAIL"
 
       - name: Notify Telegram — Failure
         if: failure()
@@ -85,4 +85,4 @@ jobs:
             -d chat_id="${TELEGRAM_CHAT_ID}" \
             --data-urlencode text="❌ DualEngine [$MODE] FAILED — check GitHub Actions logs.
 
-          $TAIL"
+$TAIL"
