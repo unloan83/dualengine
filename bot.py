@@ -8,11 +8,12 @@ from datetime import datetime, timedelta
 
 API_KEY = os.getenv("UPSTOX_API_KEY")
 ACCESS_TOKEN = os.getenv("UPSTOX_ACCESS_TOKEN")
-BASE_URL = "https://upstox.com"
+BASE_URL = "https://api.upstox.com/v2"
 LOG_FILE = "paper_trade_log.csv"
 
 MIN_TARGET_PCT = 7.0
 MAX_TARGET_PCT = 12.0
+STOP_LOSS_PCT = 2.0
 
 def get_headers():
     return {
@@ -22,7 +23,7 @@ def get_headers():
 
 def get_pure_upstox_fo_watchlist():
     print("📥 Downloading official active JSON instrument mapping from Upstox...")
-    url = "https://upstox.com"
+    url = "https://assets.upstox.com/market-quote/instruments/exchange/complete.json.gz"
     try:
         response = requests.get(url, timeout=15)
         if response.status_code != 200:
@@ -37,8 +38,13 @@ def get_pure_upstox_fo_watchlist():
         print(f"🎯 Pure Upstox Integration: Identified {len(fo_stocks)} live high-velocity F&O symbols.")
         return fo_stocks
     except Exception as e:
-        print(f"❌ CRITICAL SYSTEM ERROR: Unable to dynamically verify active symbols: {e}")
-        sys.exit(1)
+        print(f"⚠️ Falling back to static watchlist due to instrument sync error: {e}")
+        return [
+            "RELIANCE", "TATAMOTORS", "INFY", "SBIN", "HDFCBANK", 
+            "ICICIBANK", "AXISBANK", "ADANIENT", "BHARTIARTL", "TCS",
+            "MARUTI", "JIOFIN", "ITC"
+        ]
+
 
 def fetch_market_data(symbol):
     instrument_key = f"NSE_EQ|{symbol}" 
@@ -152,16 +158,38 @@ def square_off_and_close():
         
         if side == "BUY":
             max_move_pct = ((metrics["high"] - entry) / entry) * 100
-            exit_price = metrics["high"] if max_move_pct >= MIN_TARGET_PCT else metrics["current"]
+            max_drop_pct = ((entry - metrics["low"]) / entry) * 100
+            
+            if max_drop_pct >= STOP_LOSS_PCT:
+                exit_price = entry * (1 - (STOP_LOSS_PCT / 100))
+                status = 'CLOSED_SL'
+            elif max_move_pct >= MIN_TARGET_PCT:
+                exit_price = metrics["high"]
+                status = 'CLOSED_TARGET'
+            else:
+                exit_price = metrics["current"]
+                status = 'CLOSED_EOD'
+                
             pnl = exit_price - entry
         else: # SELL
             max_move_pct = ((entry - metrics["low"]) / entry) * 100
-            exit_price = metrics["low"] if max_move_pct >= MIN_TARGET_PCT else metrics["current"]
+            max_rise_pct = ((metrics["high"] - entry) / entry) * 100
+            
+            if max_rise_pct >= STOP_LOSS_PCT:
+                exit_price = entry * (1 + (STOP_LOSS_PCT / 100))
+                status = 'CLOSED_SL'
+            elif max_move_pct >= MIN_TARGET_PCT:
+                exit_price = metrics["low"]
+                status = 'CLOSED_TARGET'
+            else:
+                exit_price = metrics["current"]
+                status = 'CLOSED_EOD'
+                
             pnl = entry - exit_price
             
         df.at[index, 'Exit_Price'] = round(exit_price, 2)
         df.at[index, 'P&L_Points'] = round(pnl, 2)
-        df.at[index, 'Status'] = 'CLOSED_TARGET' if max_move_pct >= MIN_TARGET_PCT else 'CLOSED_EOD'
+        df.at[index, 'Status'] = status
         
     df.to_csv(LOG_FILE, index=False)
 
