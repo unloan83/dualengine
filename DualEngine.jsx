@@ -10,7 +10,7 @@ export default function DualEngineDashboard() {
   // 2. Automatically pulls execution outputs directly from GitHub storage
   const fetchStrategyLogs = async () => {
     try {
-      const response = await fetch('https://githubusercontent.com');
+      const response = await fetch('/api/logs');
       if (!response.ok) return;
       const dataText = await response.text();
       
@@ -34,23 +34,13 @@ export default function DualEngineDashboard() {
   const executeScanDispatch = async () => {
     setIsProcessing(true);
     try {
-      // Dispatches request directly back to GitHub's automation api runner
-      const res = await fetch('https://github.com', {
+      const res = await fetch('/api/trigger-scan', {
         method: 'POST',
-        headers: {
-          'Accept': 'application/vnd.github+json',
-          'Authorization': `Bearer ${process.env.NEXT_PUBLIC_GITHUB_PAT}`, 
-        },
-        body: JSON.stringify({
-          ref: 'main',
-          inputs: {
-            velocity: velocityPercent.toString(),
-            atr_mult: atrMultiplier.toString()
-          }
-        })
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ velocity: velocityPercent, atr_mult: atrMultiplier }),
       });
 
-      if (res.status === 204) {
+      if (res.ok) {
         alert('⚡ Parameters synchronized! GitHub Engine is now processing your calculations. The table below will update shortly.');
       } else {
         alert('⚠️ Workflow server accepted message but returned unexpected code.');

@@ -166,7 +166,7 @@ def square_off_and_close():
     df.to_csv(LOG_FILE, index=False)
 
 if __name__ == "__main__":
-    run_type = sys.argv if len(sys.argv) > 1 else "scan"
+    run_type = sys.argv[1] if len(sys.argv) > 1 else "scan"
     
     env_velocity = os.getenv("INPUT_VELOCITY", "1.0")
     env_atr_mult = os.getenv("INPUT_ATR_MULT", "0.5")
@@ -174,7 +174,10 @@ if __name__ == "__main__":
     velocity = float(env_velocity) if env_velocity.strip() != "" else 1.0
     atr_multiplier = float(env_atr_mult) if env_atr_mult.strip() != "" else 0.5
     
-    if run_type == "scan":
+    if run_type in ["scan", "monitor"]:
         scan_and_execute(velocity, atr_multiplier)
     elif run_type == "squareoff":
         square_off_and_close()
+    else:
+        print(f"Skipping auto-squareoff for pipeline testing check. (mode: {run_type})")
+
