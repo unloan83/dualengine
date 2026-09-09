@@ -1,0 +1,54 @@
+name: DualEngine Shadow
+
+on:
+  workflow_dispatch:
+
+  schedule:
+    - cron: "32,47 9 * * 1-5"
+      timezone: "Asia/Kolkata"
+    - cron: "2,17,32,47 10-14 * * 1-5"
+      timezone: "Asia/Kolkata"
+    - cron: "2,17,32 15 * * 1-5"
+      timezone: "Asia/Kolkata"
+
+permissions:
+  contents: read
+
+jobs:
+  dualengine:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests
+        run: |
+          python -m unittest discover -s tests
+
+      - name: Run DualEngine once
+        env:
+          UPSTOX_ACCESS_TOKEN: ${{ secrets.UPSTOX_ACCESS_TOKEN }}
+        run: |
+          python main.py --once
+
+      - name: Save shadow output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dualengine-${{ github.run_id }}
+          path: logs/
+          retention-days: 30
+          if-no-files-found: warn
