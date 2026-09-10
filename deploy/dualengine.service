@@ -1,0 +1,24 @@
+[Unit]
+Description=DualEngine Shadow Intelligence Engine
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/dualengine
+ExecStart=/home/ubuntu/quant_env/bin/python main.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONPATH=/home/ubuntu/trading_contracts:/home/ubuntu/dualengine
+
+# Resource limits tailored for 1GB OCI Free Tier VM
+MemoryMax=800M
+CPUQuota=150%
+
+# Security & Sandboxing
+ProtectSystem=full
+PrivateTmp=false
+
+[Install]
+WantedBy=multi-user.target
