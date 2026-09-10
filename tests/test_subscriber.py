@@ -1,10 +1,19 @@
 from datetime import datetime, timezone
+import os
+from pathlib import Path
 import unittest
 import zmq
 from trading_contracts.schemas.v1 import SignalCandidate
 
 
-def run_subscriber(ipc_endpoint: str = "ipc:///tmp/signals.ipc", timeout_seconds: float | None = None):
+def run_subscriber(ipc_endpoint: str | None = None, timeout_seconds: float | None = None):
+    if ipc_endpoint is None:
+        ipc_dir = Path("/home/ubuntu/run")
+        if ipc_dir.exists():
+            ipc_endpoint = "ipc:///home/ubuntu/run/signals.ipc"
+        else:
+            ipc_endpoint = "ipc:///tmp/signals.ipc"
+
     context = zmq.Context()
     socket = context.socket(zmq.SUB)
     socket.connect(ipc_endpoint)

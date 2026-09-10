@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import uuid
 import duckdb
@@ -11,9 +12,16 @@ class SignalPublisher:
 
     def __init__(
         self,
-        ipc_endpoint: str = "ipc:///tmp/signals.ipc",
+        ipc_endpoint: str | None = None,
         db_path: str = "data/shadow_signals.duckdb",
     ):
+        if ipc_endpoint is None:
+            ipc_dir = Path("/home/ubuntu/run")
+            if ipc_dir.exists() and os.access(str(ipc_dir), os.W_OK):
+                ipc_endpoint = "ipc:///home/ubuntu/run/signals.ipc"
+            else:
+                ipc_endpoint = "ipc:///tmp/signals.ipc"
+
         self.ipc_endpoint = ipc_endpoint
         self.context = zmq.Context()
         self.socket = self.context.socket(zmq.PUB)
