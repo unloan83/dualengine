@@ -25,6 +25,7 @@ class OHLCSnapshot:
     close: float
     volume: int
     prev_close: float
+    last_price: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +54,7 @@ InstrumentTransport = Callable[[str, float], list[dict[str, Any]]]
 
 class UpstoxMarketData:
     QUOTE_URL = "https://api.upstox.com/v3/market-quote/quotes"
+    OHLC_URL = "https://api.upstox.com/v3/market-quote/ohlc"
     INSTRUMENTS_URL = (
         "https://assets.upstox.com/market-quote/instruments/exchange/NSE.json.gz"
     )
@@ -137,39 +139,83 @@ class UpstoxMarketData:
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, Exception):
             return {}
 
+    def fetch_daily_ohlc_batch(
+        self, instrument_keys: Sequence[str]
+    ) -> dict[str, dict[str, Any]]:
+        """Fetch explicit live and previous-session daily equity OHLC."""
+        clean_keys = [k.strip() for k in instrument_keys if k and k.strip()]
+        if not clean_keys or not self.access_token:
+            return {}
+        query = urlencode({
+            "instrument_key": ",".join(clean_keys[:500]),
+            "interval": "1d",
+        })
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self.access_token}",
+            "User-Agent": "DualEngine-Shadow/1.0",
+        }
+        req = Request(f"{self.OHLC_URL}?{query}", headers=headers, method="GET")
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                if resp.status != 200:
+                    return {}
+                payload = json.loads(resp.read().decode("utf-8"))
+                if payload.get("status") != "success":
+                    return {}
+                data = payload.get("data")
+                if not isinstance(data, dict):
+                    return {}
+                normalized = {}
+                for raw in data.values():
+                    if not isinstance(raw, dict):
+                        continue
+                    token = str(raw.get("instrument_token") or "").strip()
+                    if token:
+                        normalized[token] = raw
+                return normalized
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, Exception):
+            return {}
+
     def parse_ohlc_snapshot(
-        self, symbol: str, raw: dict[str, Any]
+        self,
+        symbol: str,
+        quote_raw: dict[str, Any],
+        daily_ohlc_raw: dict[str, Any] | None = None,
     ) -> OHLCSnapshot | None:
-        if not isinstance(raw, dict):
+        if not isinstance(quote_raw, dict) or not isinstance(daily_ohlc_raw, dict):
             return None
-        ohlc = raw.get("ohlc")
-        if not isinstance(ohlc, dict):
+        previous = daily_ohlc_raw.get("prev_ohlc")
+        if not isinstance(previous, dict):
             return None
 
         try:
-            open_p = float(ohlc.get("open", 0.0))
-            high_p = float(ohlc.get("high", 0.0))
-            low_p = float(ohlc.get("low", 0.0))
-            close_p = float(ohlc.get("close", 0.0))
-            last_p = float(raw.get("last_price", close_p or 0.0))
+            open_p = float(previous.get("open", 0.0))
+            high_p = float(previous.get("high", 0.0))
+            low_p = float(previous.get("low", 0.0))
+            close_p = float(previous.get("close", 0.0))
+            last_p = float(quote_raw.get("last_price", 0.0))
 
-            if open_p <= 0 or high_p <= 0 or low_p <= 0 or close_p <= 0:
+            if min(open_p, high_p, low_p, close_p, last_p) <= 0:
+                return None
+            if high_p < max(open_p, close_p, low_p) or low_p > min(open_p, close_p, high_p):
                 return None
 
-            prev_close = float(ohlc.get("prev_close") or close_p)
-            volume = int(raw.get("volume") or 0)
-            as_of_ts = raw.get("timestamp") or datetime.now(INDIA_TZ).isoformat()
+            prev_close = close_p
+            volume = int(previous.get("volume") or 0)
+            as_of_ts = quote_raw.get("timestamp") or datetime.now(INDIA_TZ).isoformat()
 
             return OHLCSnapshot(
                 symbol=symbol,
-                instrument_key=str(raw.get("instrument_token") or symbol),
+                instrument_key=str(quote_raw.get("instrument_token") or symbol),
                 as_of=str(as_of_ts),
                 open=open_p,
                 high=high_p,
                 low=low_p,
-                close=last_p if last_p > 0 else close_p,
+                close=close_p,
                 volume=volume,
                 prev_close=prev_close,
+                last_price=last_p,
             )
         except (ValueError, TypeError):
             return None

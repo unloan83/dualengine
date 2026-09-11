@@ -29,7 +29,12 @@ def map_record_to_signal_params(r: DualEngineShadowRecord):
         else MarketRegime.RANGE_BOUND
     )
     entry_price = float(r.factual_metrics.get("current_price") or r.factual_metrics.get("prev_close") or 0.0)
-    stop_loss = float(r.factual_metrics.get("cpr_bc") or r.factual_metrics.get("cpr_tc") or 0.0)
+    if direction == Direction.LONG:
+        stop_loss = float(r.factual_metrics.get("cpr_bc") or 0.0)
+    elif direction == Direction.SHORT:
+        stop_loss = float(r.factual_metrics.get("cpr_tc") or 0.0)
+    else:
+        stop_loss = 0.0
     return {
         "instrument_id": r.symbol,
         "direction": direction,
@@ -57,6 +62,7 @@ def run_shadow_cycle(
     all_keys = eq_keys + fo_keys
 
     raw_quotes = client.fetch_quotes_batch(all_keys)
+    daily_ohlc = client.fetch_daily_ohlc_batch(eq_keys)
     records: list[DualEngineShadowRecord] = []
 
     for sym in symbols:
@@ -68,7 +74,11 @@ def run_shadow_cycle(
             raw_eq = raw_quotes.get(pair.equity_key) or {}
             raw_fo = raw_quotes.get(pair.futures_key) or {}
 
-            prev_ohlc = client.parse_ohlc_snapshot(sym, raw_eq)
+            prev_ohlc = client.parse_ohlc_snapshot(
+                sym,
+                raw_eq,
+                daily_ohlc.get(pair.equity_key),
+            )
             futures_snap = client.parse_futures_snapshot(sym, raw_fo)
 
             if futures_snap is None and raw_eq:

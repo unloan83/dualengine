@@ -81,10 +81,13 @@ class DualEngine:
         if prev_ohlc is None or prev_ohlc.high <= 0 or prev_ohlc.low <= 0 or prev_ohlc.close <= 0:
             return self._build_fallback_record(symbol, timestamp_str)
 
+        if prev_ohlc.last_price is None or prev_ohlc.last_price <= 0:
+            return self._build_fallback_record(symbol, timestamp_str)
+
         cpr = calculate_cpr(prev_ohlc.high, prev_ohlc.low, prev_ohlc.close)
-        current_price = prev_ohlc.close  # default fallback if no current futures price
-        if current_futures and current_futures.last_price > 0:
-            current_price = current_futures.last_price
+        # CPR and the executable paper entry are both cash-equity prices.
+        # The stock-futures contract is used only for OI confirmation.
+        current_price = prev_ohlc.last_price
 
         price_vs_cpr = classify_price_vs_cpr(current_price, cpr)
         pdh_pdl = classify_pdh_pdl(current_price, prev_ohlc.high, prev_ohlc.low)
@@ -120,6 +123,7 @@ class DualEngine:
             "prev_low": prev_ohlc.low,
             "prev_close": prev_ohlc.close,
             "current_price": current_price,
+            "futures_last_price": current_futures.last_price if current_futures else None,
             "futures_price_change_pct": oi_metrics.price_change_pct,
             "current_oi": current_futures.current_oi if current_futures else None,
             "previous_oi": current_futures.prev_oi if current_futures else None,

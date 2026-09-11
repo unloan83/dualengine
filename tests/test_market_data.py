@@ -16,32 +16,44 @@ class TestMarketData(unittest.TestCase):
         self.client = UpstoxMarketData(access_token="mock_token")
 
     def test_parse_ohlc_snapshot_valid(self):
-        raw = {
+        quote_raw = {
             "instrument_token": "NSE_EQ|RELIANCE",
             "last_price": 2955.0,
-            "volume": 1250000,
             "timestamp": "2026-09-09T11:30:00+05:30",
-            "ohlc": {
+        }
+        daily_raw = {
+            "instrument_token": "NSE_EQ|RELIANCE",
+            "prev_ohlc": {
                 "open": 2930.0,
                 "high": 2960.0,
                 "low": 2920.0,
                 "close": 2940.0,
-                "prev_close": 2925.0,
+                "volume": 1250000,
             },
         }
-        snap = self.client.parse_ohlc_snapshot("RELIANCE", raw)
+        snap = self.client.parse_ohlc_snapshot("RELIANCE", quote_raw, daily_raw)
         self.assertIsNotNone(snap)
         self.assertEqual(snap.symbol, "RELIANCE")
         self.assertEqual(snap.open, 2930.0)
         self.assertEqual(snap.high, 2960.0)
         self.assertEqual(snap.low, 2920.0)
-        self.assertEqual(snap.close, 2955.0)
+        self.assertEqual(snap.close, 2940.0)
+        self.assertEqual(snap.last_price, 2955.0)
 
     def test_parse_ohlc_snapshot_invalid(self):
         # Invalid OHLC (missing fields or zero prices)
-        raw = {"ohlc": {"open": 0.0, "high": 0.0}}
-        snap = self.client.parse_ohlc_snapshot("INVALID", raw)
+        quote_raw = {"last_price": 100.0}
+        daily_raw = {"prev_ohlc": {"open": 0.0, "high": 0.0}}
+        snap = self.client.parse_ohlc_snapshot("INVALID", quote_raw, daily_raw)
         self.assertIsNone(snap)
+
+    def test_parse_ohlc_snapshot_refuses_current_session_ohlc_fallback(self):
+        quote_raw = {
+            "instrument_token": "NSE_EQ|RELIANCE",
+            "last_price": 2955.0,
+            "ohlc": {"open": 2950.0, "high": 2960.0, "low": 2940.0, "close": 2955.0},
+        }
+        self.assertIsNone(self.client.parse_ohlc_snapshot("RELIANCE", quote_raw))
 
     def test_parse_futures_snapshot_with_oi(self):
         raw = {
@@ -109,6 +121,23 @@ class TestMarketData(unittest.TestCase):
         self.assertEqual(result["requested-key"]["last_price"], 1)
         requested_url = mocked_urlopen.call_args.args[0].full_url
         self.assertIn("/v3/market-quote/quotes?", requested_url)
+
+    @patch("market_data.urlopen")
+    def test_fetch_daily_ohlc_requests_explicit_one_day_interval(self, mocked_urlopen):
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = (
+            b'{"status":"success","data":{"NSE_EQ:RELIANCE":'
+            b'{"instrument_token":"requested-key","prev_ohlc":{"close":1}}}}'
+        )
+        mocked_urlopen.return_value.__enter__.return_value = response
+
+        result = self.client.fetch_daily_ohlc_batch(["requested-key"])
+
+        self.assertIn("requested-key", result)
+        requested_url = mocked_urlopen.call_args.args[0].full_url
+        self.assertIn("/v3/market-quote/ohlc?", requested_url)
+        self.assertIn("interval=1d", requested_url)
 
     def test_parse_futures_snapshot_missing_oi(self):
         raw = {

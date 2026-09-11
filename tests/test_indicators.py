@@ -30,7 +30,10 @@ class TestIndicators(unittest.TestCase):
 
     def test_indicators_do_not_affect_dualengine_opinion(self):
         engine = DualEngine()
-        prev_ohlc = OHLCSnapshot("RELIANCE", "NSE_EQ|RELIANCE", "2026-09-09", 100.0, 105.0, 95.0, 102.0, 1000, 100.0)
+        prev_ohlc = OHLCSnapshot(
+            "RELIANCE", "NSE_EQ|RELIANCE", "2026-09-09",
+            100.0, 105.0, 95.0, 102.0, 1000, 100.0, 102.0,
+        )
 
         # Evaluate with bullish RSI / EMA
         rec_high_rsi = engine.evaluate_stock(

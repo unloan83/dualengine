@@ -27,6 +27,7 @@ class TestEngine(unittest.TestCase):
             close=2940.0,
             volume=100000,
             prev_close=2920.0,
+            last_price=2965.0,
         )
         self.futures_snap = FuturesSnapshot(
             symbol="RELIANCE",
@@ -66,6 +67,8 @@ class TestEngine(unittest.TestCase):
 
         # Factual metrics
         self.assertEqual(d["factual_metrics"]["cpr_pivot"], 2940.0)
+        self.assertEqual(d["factual_metrics"]["current_price"], 2965.0)
+        self.assertEqual(d["factual_metrics"]["futures_last_price"], 2965.0)
         self.assertEqual(d["factual_metrics"]["current_oi"], 15420000)
 
         # Derived classifications
@@ -74,6 +77,38 @@ class TestEngine(unittest.TestCase):
 
         # Opinion
         self.assertEqual(d["opinion"]["dualengine_direction"], "LONG")
+
+    def test_equity_last_price_not_futures_price_drives_cpr_and_entry(self):
+        equity = OHLCSnapshot(
+            symbol="RELIANCE",
+            instrument_key="NSE_EQ|RELIANCE",
+            as_of="2026-09-09T11:30:00+05:30",
+            open=93.0,
+            high=100.0,
+            low=90.0,
+            close=95.0,
+            volume=100000,
+            prev_close=95.0,
+            last_price=101.0,
+        )
+        futures = FuturesSnapshot(
+            symbol="RELIANCE",
+            instrument_key="NSE_FO|RELIANCE26SEPFUT",
+            as_of="2026-09-09T11:30:00+05:30",
+            last_price=80.0,
+            prev_close=79.0,
+            current_oi=1100,
+            prev_oi=1000,
+            oi_day_high=1100,
+            oi_day_low=900,
+        )
+        result = self.engine.evaluate_stock(
+            symbol="RELIANCE", prev_ohlc=equity, current_futures=futures
+        )
+        self.assertEqual(result.cpr_state, "BULLISH")
+        self.assertEqual(result.dualengine_direction, "LONG")
+        self.assertEqual(result.factual_metrics["current_price"], 101.0)
+        self.assertEqual(result.factual_metrics["futures_last_price"], 80.0)
 
     def test_logger_rotation_and_restart(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
