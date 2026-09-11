@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 import sys
+from datetime import datetime
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
@@ -45,8 +47,9 @@ class TestMarketData(unittest.TestCase):
         raw = {
             "instrument_token": "NSE_FO|RELIANCE26SEPFUT",
             "last_price": 2960.0,
-            "oi": 15420000,
-            "prev_oi": 14438200,
+            "oi": 15420000.0,
+            "previous_oi": 14438200.0,
+            "prev_close_price": 2940.0,
             "ohlc": {"close": 2940.0},
             "timestamp": "2026-09-09T11:30:00+05:30",
         }
@@ -55,6 +58,57 @@ class TestMarketData(unittest.TestCase):
         self.assertEqual(snap.last_price, 2960.0)
         self.assertEqual(snap.current_oi, 15420000)
         self.assertEqual(snap.prev_oi, 14438200)
+
+    def test_resolve_instruments_uses_nearest_future_and_daily_cache(self):
+        rows = [
+            {
+                "segment": "NSE_EQ",
+                "instrument_type": "EQ",
+                "trading_symbol": "RELIANCE",
+                "instrument_key": "equity-key",
+            },
+            {
+                "segment": "NSE_FO",
+                "instrument_type": "FUT",
+                "underlying_symbol": "RELIANCE",
+                "instrument_key": "later-future",
+                "expiry": 1793298600000,
+            },
+            {
+                "segment": "NSE_FO",
+                "instrument_type": "FUT",
+                "underlying_symbol": "RELIANCE",
+                "instrument_key": "near-future",
+                "expiry": 1790274600000,
+            },
+        ]
+        transport = MagicMock(return_value=rows)
+        client = UpstoxMarketData("token", instrument_transport=transport)
+        as_of = datetime.fromisoformat("2026-09-11T09:20:00+05:30")
+
+        first = client.resolve_instruments(["RELIANCE"], as_of=as_of)
+        second = client.resolve_instruments(["RELIANCE"], as_of=as_of)
+
+        self.assertEqual(first["RELIANCE"].equity_key, "equity-key")
+        self.assertEqual(first["RELIANCE"].futures_key, "near-future")
+        self.assertEqual(second, first)
+        transport.assert_called_once()
+
+    @patch("market_data.urlopen")
+    def test_fetch_quotes_normalizes_v3_response_by_token(self, mocked_urlopen):
+        response = MagicMock()
+        response.status = 200
+        response.read.return_value = (
+            b'{"status":"success","data":{"NSE_EQ:RELIANCE":'
+            b'{"instrument_token":"requested-key","last_price":1}}}'
+        )
+        mocked_urlopen.return_value.__enter__.return_value = response
+
+        result = self.client.fetch_quotes_batch(["requested-key"])
+
+        self.assertEqual(result["requested-key"]["last_price"], 1)
+        requested_url = mocked_urlopen.call_args.args[0].full_url
+        self.assertIn("/v3/market-quote/quotes?", requested_url)
 
     def test_parse_futures_snapshot_missing_oi(self):
         raw = {

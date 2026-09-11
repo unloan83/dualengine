@@ -51,8 +51,9 @@ def run_shadow_cycle(
 ) -> list[DualEngineShadowRecord]:
     now = datetime.now(INDIA_TZ)
 
-    eq_keys = [f"NSE_EQ|{sym}" for sym in symbols]
-    fo_keys = [f"NSE_FO|{sym}" for sym in symbols]
+    instruments = client.resolve_instruments(symbols, as_of=now)
+    eq_keys = [pair.equity_key for pair in instruments.values()]
+    fo_keys = [pair.futures_key for pair in instruments.values()]
     all_keys = eq_keys + fo_keys
 
     raw_quotes = client.fetch_quotes_batch(all_keys)
@@ -60,11 +61,12 @@ def run_shadow_cycle(
 
     for sym in symbols:
         try:
-            eq_key = f"NSE_EQ|{sym}"
-            fo_key = f"NSE_FO|{sym}"
+            pair = instruments.get(sym)
+            if pair is None:
+                raise ValueError(f"{sym}: no current Upstox equity/futures mapping")
 
-            raw_eq = raw_quotes.get(eq_key) or raw_quotes.get(sym) or {}
-            raw_fo = raw_quotes.get(fo_key) or {}
+            raw_eq = raw_quotes.get(pair.equity_key) or {}
+            raw_fo = raw_quotes.get(pair.futures_key) or {}
 
             prev_ohlc = client.parse_ohlc_snapshot(sym, raw_eq)
             futures_snap = client.parse_futures_snapshot(sym, raw_fo)
