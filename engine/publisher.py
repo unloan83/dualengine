@@ -60,6 +60,8 @@ class SignalPublisher:
         entry_price: float,
         stop_loss: float,
         reasons: list[str],
+        slippage_bps_per_side: float | None = None,
+        cohort: str = "STANDARD",
         validity_seconds: int = 60,
     ) -> SignalCandidate:
         now = datetime.now(timezone.utc)
@@ -75,6 +77,8 @@ class SignalPublisher:
             entry_trigger=entry_price,
             invalidation_level=stop_loss,
             reason_codes=reasons,
+            slippage_bps_per_side=slippage_bps_per_side,
+            cohort=cohort,
         )
 
         # 1. ZeroMQ Broadcast

@@ -106,6 +106,17 @@ class TestMarketData(unittest.TestCase):
         self.assertEqual(second, first)
         transport.assert_called_once()
 
+    def test_resolve_instruments_rolls_before_expiry_session_trading(self):
+        rows = [
+            {"segment": "NSE_EQ", "instrument_type": "EQ", "trading_symbol": "ABC", "instrument_key": "eq"},
+            {"segment": "NSE_FO", "instrument_type": "FUT", "underlying_symbol": "ABC", "instrument_key": "near", "expiry": "2026-09-29"},
+            {"segment": "NSE_FO", "instrument_type": "FUT", "underlying_symbol": "ABC", "instrument_key": "next", "expiry": "2026-10-27"},
+        ]
+        client = UpstoxMarketData("token", instrument_transport=MagicMock(return_value=rows))
+        result = client.resolve_instruments(["ABC"], as_of=datetime.fromisoformat("2026-09-29T09:15:00+05:30"))
+        self.assertEqual(result["ABC"].futures_key, "next")
+        self.assertEqual(result["ABC"].contract_cohort, "ROLLOVER_EXPIRY")
+
     @patch("market_data.urlopen")
     def test_fetch_quotes_normalizes_v3_response_by_token(self, mocked_urlopen):
         response = MagicMock()

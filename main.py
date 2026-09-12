@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import json
 import sys
 import time
@@ -14,6 +15,7 @@ from engine.publisher import SignalPublisher
 from logger import ShadowLogger
 from market_data import FuturesSnapshot, OHLCSnapshot, UpstoxMarketData
 from trading_contracts.schemas.v1 import Direction, MarketRegime
+from trading_contracts.execution import liquidity_slippage_bps_per_side
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
@@ -35,6 +37,9 @@ def map_record_to_signal_params(r: DualEngineShadowRecord):
         stop_loss = float(r.factual_metrics.get("cpr_tc") or 0.0)
     else:
         stop_loss = 0.0
+    prior_turnover = float(r.factual_metrics.get("prev_close") or 0.0) * float(
+        r.factual_metrics.get("prev_volume") or 0.0
+    )
     return {
         "instrument_id": r.symbol,
         "direction": direction,
@@ -44,6 +49,8 @@ def map_record_to_signal_params(r: DualEngineShadowRecord):
         "entry_price": entry_price,
         "stop_loss": stop_loss,
         "reasons": r.reason_codes,
+        "slippage_bps_per_side": liquidity_slippage_bps_per_side(prior_turnover),
+        "cohort": str(r.derived_classifications.get("contract_cohort") or "STANDARD"),
     }
 
 
@@ -79,6 +86,12 @@ def run_shadow_cycle(
                 raw_eq,
                 daily_ohlc.get(pair.equity_key),
             )
+            actions = client.fetch_corporate_actions(pair.equity_isin, as_of=now.date())
+            if prev_ohlc is None or actions is None:
+                raise ValueError(f"{sym}: corporate-action validation unavailable")
+            prev_ohlc = client.adjust_previous_ohlc_for_actions(
+                prev_ohlc, actions, session_date=now.date()
+            )
             futures_snap = client.parse_futures_snapshot(sym, raw_fo)
 
             if futures_snap is None and raw_eq:
@@ -91,6 +104,19 @@ def run_shadow_cycle(
                 recent_prices=None,
                 now=now,
             )
+            if pair.contract_cohort != "STANDARD":
+                rec = replace(
+                    rec,
+                    reason_codes=[*rec.reason_codes, pair.contract_cohort],
+                    derived_classifications={
+                        **rec.derived_classifications,
+                        "contract_cohort": pair.contract_cohort,
+                    },
+                    opinion={
+                        **rec.opinion,
+                        "reason_codes": [*rec.opinion["reason_codes"], pair.contract_cohort],
+                    },
+                )
             records.append(rec)
             logger.log_record(rec)
 

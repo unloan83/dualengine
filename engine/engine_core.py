@@ -122,6 +122,7 @@ class DualEngine:
             "prev_high": prev_ohlc.high,
             "prev_low": prev_ohlc.low,
             "prev_close": prev_ohlc.close,
+            "prev_volume": prev_ohlc.volume,
             "current_price": current_price,
             "futures_last_price": current_futures.last_price if current_futures else None,
             "futures_price_change_pct": oi_metrics.price_change_pct,

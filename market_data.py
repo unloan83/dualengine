@@ -4,12 +4,13 @@ import gzip
 import json
 import math
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Callable, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zoneinfo import ZoneInfo
+from trading_contracts.execution import adjust_price_for_corporate_actions
 
 INDIA_TZ = ZoneInfo("Asia/Kolkata")
 
@@ -47,6 +48,8 @@ class InstrumentPair:
     equity_key: str
     futures_key: str
     futures_expiry: date
+    contract_cohort: str = "STANDARD"
+    equity_isin: str = ""
 
 
 InstrumentTransport = Callable[[str, float], list[dict[str, Any]]]
@@ -70,6 +73,7 @@ class UpstoxMarketData:
         self._instrument_transport = instrument_transport or _download_instruments
         self._instrument_cache_date: date | None = None
         self._instrument_cache: dict[str, InstrumentPair] = {}
+        self._actions_cache: dict[tuple[str, date], list[dict[str, Any]]] = {}
 
     def resolve_instruments(
         self,
@@ -176,6 +180,56 @@ class UpstoxMarketData:
                 return normalized
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, Exception):
             return {}
+
+    def fetch_corporate_actions(self, isin: str, *, as_of: date) -> list[dict[str, Any]] | None:
+        clean = isin.strip().upper()
+        if not clean or not self.access_token:
+            return None
+        cache_key = (clean, as_of)
+        if cache_key in self._actions_cache:
+            return self._actions_cache[cache_key]
+        headers = {
+            "Accept": "application/json",
+            "Authorization": f"Bearer {self.access_token}",
+            "User-Agent": "DualEngine-Shadow/1.0",
+        }
+        req = Request(
+            f"https://api.upstox.com/v2/fundamentals/{clean}/corporate-actions",
+            headers=headers,
+            method="GET",
+        )
+        try:
+            with urlopen(req, timeout=self.timeout) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            data = payload.get("data")
+            if payload.get("status") != "success" or not isinstance(data, list):
+                return None
+            actions = [item for item in data if isinstance(item, dict)]
+            self._actions_cache[cache_key] = actions
+            return actions
+        except (HTTPError, URLError, TimeoutError, json.JSONDecodeError, Exception):
+            return None
+
+    def adjust_previous_ohlc_for_actions(
+        self,
+        snapshot: OHLCSnapshot,
+        actions: Sequence[dict[str, Any]],
+        *,
+        session_date: date,
+    ) -> OHLCSnapshot:
+        prior_boundary = session_date - timedelta(days=1)
+        adjust = lambda value: adjust_price_for_corporate_actions(
+            value, prior_boundary, actions, session_date
+        )
+        return OHLCSnapshot(
+            symbol=snapshot.symbol,
+            instrument_key=snapshot.instrument_key,
+            as_of=snapshot.as_of,
+            open=adjust(snapshot.open), high=adjust(snapshot.high),
+            low=adjust(snapshot.low), close=adjust(snapshot.close),
+            volume=snapshot.volume, prev_close=adjust(snapshot.prev_close),
+            last_price=snapshot.last_price,
+        )
 
     def parse_ohlc_snapshot(
         self,
@@ -285,7 +339,7 @@ def _resolve_instrument_rows(
     rows: Sequence[dict[str, Any]],
     session_date: date,
 ) -> dict[str, InstrumentPair]:
-    equities: dict[str, str] = {}
+    equities: dict[str, tuple[str, str]] = {}
     futures: dict[str, list[tuple[date, str]]] = {}
 
     for row in rows:
@@ -298,7 +352,7 @@ def _resolve_instrument_rows(
         if segment == "NSE_EQ" and instrument_type == "EQ":
             symbol = str(row.get("trading_symbol") or "").strip().upper()
             if symbol:
-                equities[symbol] = instrument_key
+                equities[symbol] = (instrument_key, str(row.get("isin") or "").strip())
             continue
 
         if segment == "NSE_FO" and instrument_type == "FUT":
@@ -308,16 +362,27 @@ def _resolve_instrument_rows(
                 futures.setdefault(symbol, []).append((expiry, instrument_key))
 
     resolved: dict[str, InstrumentPair] = {}
-    for symbol, equity_key in equities.items():
+    for symbol, (equity_key, equity_isin) in equities.items():
         contracts = futures.get(symbol)
         if not contracts:
             continue
-        expiry, futures_key = min(contracts, key=lambda item: (item[0], item[1]))
+        ordered = sorted(contracts, key=lambda item: (item[0], item[1]))
+        # Hard roll: never open the expiring contract on expiry day.  Switch to
+        # the next listed month at session start and explicitly tag the cohort.
+        contract_cohort = "STANDARD"
+        expiry, futures_key = ordered[0]
+        if expiry == session_date:
+            if len(ordered) < 2:
+                continue
+            expiry, futures_key = ordered[1]
+            contract_cohort = "ROLLOVER_EXPIRY"
         resolved[symbol] = InstrumentPair(
             symbol=symbol,
             equity_key=equity_key,
             futures_key=futures_key,
             futures_expiry=expiry,
+            contract_cohort=contract_cohort,
+            equity_isin=equity_isin,
         )
     return resolved
 
